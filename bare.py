@@ -124,8 +124,9 @@ class BNO080Reader:
                 data['mag'] = {'x': mx, 'y': my, 'z': mz}
 
             # Read quaternion (orientation)
+            # BNO08x returns (i, j, k, real) = (x, y, z, w) format
             if self.bno.quaternion is not None:
-                qw, qx, qy, qz = self.bno.quaternion
+                qx, qy, qz, qw = self.bno.quaternion
                 data['quaternion'] = {'w': qw, 'x': qx, 'y': qy, 'z': qz}
                 roll, pitch, yaw = self.quaternion_to_euler(qw, qx, qy, qz)
                 data['euler'] = {'roll': roll, 'pitch': pitch, 'yaw': yaw}
