@@ -18,25 +18,17 @@ import time
 class IMUViewer:
     """Real-time IMU visualization using Viser."""
 
-    def __init__(self, port=8080, buffer_size=200, axis_transform=None):
+    def __init__(self, port=8080, buffer_size=200):
         """
         Initialize Viser-based IMU visualizer.
 
         Args:
             port: Web server port (default 8080)
             buffer_size: Number of data points to display (default 200 = 5s at 40Hz)
-            axis_transform: Optional axis transformation matrix (3x3) or preset string
-                          Options: None, 'swap_xy', 'swap_xz', 'swap_yz',
-                                   'bno_to_visual' (try this first!)
         """
         print(f"Starting Viser server on port {port}...")
         self.server = viser.ViserServer(port=port)
         self.buffer_size = buffer_size
-
-        # Axis transformation configuration
-        self.axis_transform = self._setup_axis_transform(axis_transform)
-        if axis_transform:
-            print(f"Using axis transformation: {axis_transform}")
 
         # Time tracking
         self.start_time = None
@@ -76,123 +68,6 @@ class IMUViewer:
         self._setup_plots()
 
         print(f"✓ Visualization ready at http://localhost:{port}")
-
-    def _setup_axis_transform(self, transform):
-        """
-        Setup axis transformation matrix.
-
-        Common BNO080 issue: Sensor axes don't match visualization axes.
-        This allows remapping axes to fix orientation mismatches.
-        """
-        if transform is None:
-            return None
-
-        # Predefined transformations
-        # Based on manual BNO080 testing:
-        #   - Physical Z (perpendicular) shows as Visual X (red) without transform
-        #   - Physical X (along length) shows as Visual Z (blue) without transform
-        #   - Solution: swap_xz to fix the mapping
-        #   - Additional issue: Z axis inverted (pointing down instead of up)
-        #   - Final solution: swap_xz_flipz combines swap + 180° rotation
-        presets = {
-            'swap_xy': np.array([[0, 1, 0], [1, 0, 0], [0, 0, 1]]),  # Swap X and Y
-            'swap_xz': np.array([[0, 0, 1], [0, 1, 0], [1, 0, 0]]),  # Swap X and Z
-            'swap_yz': np.array([[1, 0, 0], [0, 0, 1], [0, 1, 0]]),  # Swap Y and Z
-            'flip_z': np.array([[1, 0, 0], [0, 1, 0], [0, 0, -1]]),  # Flip Z direction only
-            'swap_xz_flipz': np.array([[0, 0, -1], [0, 1, 0], [-1, 0, 0]]),  # Swap X↔Z + flip both
-            'swap_xz_flipy': np.array([[0, 0, 1], [0, -1, 0], [1, 0, 0]]),  # Swap X↔Z + flip Y only
-            'swap_xz_rot180y': np.array([[0, 0, -1], [0, 1, 0], [1, 0, 0]]),  # Swap X↔Z + 180° around Y
-            'bno080_fix': np.array([[0, 0, 1], [0, -1, 0], [-1, 0, 0]]),  # Swap X↔Z + flip both Y and Z (BNO080 SparkFun board)
-        }
-
-        if isinstance(transform, str):
-            if transform in presets:
-                return presets[transform]
-            else:
-                print(f"Warning: Unknown preset '{transform}', using no transform")
-                return None
-        elif isinstance(transform, np.ndarray):
-            return transform
-        else:
-            return None
-
-    def _transform_quaternion(self, quat_dict):
-        """
-        Apply axis transformation to quaternion if configured.
-
-        Args:
-            quat_dict: Dictionary with 'w', 'x', 'y', 'z' keys
-
-        Returns:
-            Transformed quaternion dictionary
-        """
-        if self.axis_transform is None:
-            return quat_dict
-
-        from scipy.spatial.transform import Rotation
-
-        # First: Apply axis transformation
-        quat_array = [quat_dict['x'], quat_dict['y'], quat_dict['z'], quat_dict['w']]  # scipy uses x,y,z,w
-        rot = Rotation.from_quat(quat_array)
-        rot_matrix = rot.as_matrix()
-
-        # Apply axis transformation: R_new = T * R_old * T^T
-        rot_matrix_transformed = self.axis_transform @ rot_matrix @ self.axis_transform.T
-
-        # Convert back to quaternion
-        rot_transformed = Rotation.from_matrix(rot_matrix_transformed)
-
-        # Second: Apply 180° correction rotation around Y axis (to flip the IMU right-side up)
-        # 180° rotation around Y = quaternion (w=0, x=0, y=1, z=0)
-        correction_rot = Rotation.from_quat([0, 1, 0, 0])  # 180° around Y
-
-        # Multiply quaternions: final = correction * transformed
-        final_rot = correction_rot * rot_transformed
-
-        quat_final = final_rot.as_quat()  # Returns [x, y, z, w]
-
-        return {
-            'w': quat_final[3],
-            'x': quat_final[0],
-            'y': quat_final[1],
-            'z': quat_final[2]
-        }
-
-    def _transform_euler(self, quat_dict):
-        """
-        Calculate Euler angles from transformed quaternion if transformation is active.
-
-        Args:
-            quat_dict: Original quaternion dictionary with 'w', 'x', 'y', 'z' keys
-
-        Returns:
-            Transformed euler angles dictionary with 'roll', 'pitch', 'yaw' keys (in radians)
-            or None if no transformation is active
-        """
-        if self.axis_transform is None:
-            return None  # Use original euler angles
-
-        # Get transformed quaternion
-        transformed_quat = self._transform_quaternion(quat_dict)
-
-        # Convert transformed quaternion to Euler angles
-        from scipy.spatial.transform import Rotation
-        quat_array = [
-            transformed_quat['x'],
-            transformed_quat['y'],
-            transformed_quat['z'],
-            transformed_quat['w']
-        ]
-        rot = Rotation.from_quat(quat_array)
-
-        # Get Euler angles in ZYX order (yaw, pitch, roll)
-        euler_zyx = rot.as_euler('ZYX', degrees=False)
-
-        return {
-            'yaw': euler_zyx[0],    # Z rotation
-            'pitch': euler_zyx[1],  # Y rotation
-            'roll': euler_zyx[2]    # X rotation
-        }
 
     def _setup_3d_scene(self):
         """
@@ -369,21 +244,10 @@ class IMUViewer:
         self.linear_accel_buffer['y'].append(data['linear_accel']['y'])
         self.linear_accel_buffer['z'].append(data['linear_accel']['z'])
 
-        # Euler angles - use transformed values if axis transformation is active
-        transformed_euler = self._transform_euler(data['quaternion'])
-        if transformed_euler is not None:
-            # Use transformed Euler angles (in transformed coordinate frame)
-            euler_to_use = transformed_euler
-            # Also update the data dict so printed values match visualization
-            data['euler'] = transformed_euler
-        else:
-            # Use original Euler angles
-            euler_to_use = data['euler']
-
-        # Store Euler angles in buffer (convert to degrees)
-        self.euler_buffer['roll'].append(math.degrees(euler_to_use['roll']))
-        self.euler_buffer['pitch'].append(math.degrees(euler_to_use['pitch']))
-        self.euler_buffer['yaw'].append(math.degrees(euler_to_use['yaw']))
+        # Euler angles (convert to degrees)
+        self.euler_buffer['roll'].append(math.degrees(data['euler']['roll']))
+        self.euler_buffer['pitch'].append(math.degrees(data['euler']['pitch']))
+        self.euler_buffer['yaw'].append(math.degrees(data['euler']['yaw']))
 
         # Update 3D orientation and position
         self._update_3d_pose(data['quaternion'], position)
@@ -401,16 +265,13 @@ class IMUViewer:
             quaternion: Dict with 'w', 'x', 'y', 'z' keys
             position: Optional tuple (x, y, z) for position in world frame
         """
-        # Apply axis transformation if configured
-        transformed_quat = self._transform_quaternion(quaternion)
-
         # IMPORTANT: Viser requires explicit re-assignment to trigger client updates
         # Create a NEW numpy array each time (don't reuse the same object)
         new_wxyz = np.array([
-            transformed_quat['w'],
-            transformed_quat['x'],
-            transformed_quat['y'],
-            transformed_quat['z']
+            quaternion['w'],
+            quaternion['x'],
+            quaternion['y'],
+            quaternion['z']
         ], dtype=np.float64)
 
         self.imu_frame.wxyz = new_wxyz
