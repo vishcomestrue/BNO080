@@ -2,11 +2,32 @@
 
 Real-time 3D orientation and time series visualization for BNO080 IMU data.
 
+## Hardware
+
+This project uses the **SparkFun BNO080 IMU** breakout board:
+
+![SparkFun BNO080 IMU Board](assets/bno_board.png)
+
+**Board Features:**
+- BNO080 9-axis IMU with sensor fusion
+- I2C interface (default address: 0x4B)
+- Axis orientation marked on PCB
+- Dimensions: ~2.5cm × 2.5cm PCB
+
+## Visualization Preview
+
+![Viser 3D Visualization](assets/bno_viser.png)
+
+The visualization shows:
+- **3D Scene** (left): IMU orientation with coordinate axes and LED indicator
+- **Time Series Plots** (right): Real-time sensor data (gyro, accel, mag, linear accel, euler angles)
+- **World Frame**: Blue (Z-up), Red (X-east), Green (Y-north)
+
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  bare.py (Main Loop @ 40Hz)                                 │
+│  example_with_viewer.py (Main Loop @ 40Hz)                  │
 │  ┌───────────────────────────────────────────────────────┐  │
 │  │  while True:                                          │  │
 │  │    data = imu.read_data()  # Read sensor             │  │
@@ -53,9 +74,6 @@ uv pip install viser
 
 # Install plotly (for time series plots)
 uv pip install plotly
-
-# Install scipy (for axis transformations)
-uv pip install scipy
 ```
 
 ## Usage
@@ -124,10 +142,10 @@ class IMUViewer:
 
 ### World Frame Convention
 
-The visualization uses a **Z-up right-handed coordinate system**:
-- **X axis (Red)**: Length direction (forward)
-- **Y axis (Green)**: Width direction (left)
-- **Z axis (Blue)**: Height direction (up)
+The visualization uses the **Android sensor coordinate system (East-North-Up)**:
+- **X axis (Red)**: East - tangent to ground
+- **Y axis (Green)**: North - magnetic north, tangent to ground
+- **Z axis (Blue)**: Up - perpendicular to ground, points toward sky
 
 The IMU cuboid dimensions:
 - Length (X): 3cm (0.03m)
@@ -141,10 +159,9 @@ LED indicator:
 - Positioned on top surface
 - Color: Dark red
 
-Coordinate frame axes (properly scaled):
-- IMU frame: 3cm axes (1× IMU length, same as board)
+Coordinate frame axes:
+- IMU frame: 3cm axes (1× IMU length)
 - World frame: 4.5cm axes (1.5× IMU length)
-- Axes thickness: Very thin to not obscure the IMU
 
 Ground plane:
 - Size: 30cm × 30cm
@@ -179,8 +196,8 @@ Side view (showing thin profile):
 - ✅ Real-time coordinate frame showing IMU orientation (quaternion-based)
 - ✅ Black cuboid representing the physical sensor (3cm × 2.5cm × 2mm)
 - ✅ Dark red LED indicator on top surface (1mm × 2mm × 1mm)
-- ✅ World frame with Z-up convention (X=length, Y=width, Z=height)
-- ✅ Properly scaled axes (IMU: 3cm/1×, World: 4.5cm/1.5×) proportional to IMU size
+- ✅ World frame with East-North-Up convention
+- ✅ Properly scaled axes proportional to IMU size
 - ✅ Ground plane for reference (30cm × 30cm with 5cm grid)
 - ✅ Updates position and orientation at data rate (40Hz)
 
@@ -201,11 +218,15 @@ Side view (showing thin profile):
 ## File Structure
 
 ```
-sim2real/bno/
+bno/
 ├── bare.py                 # BNO080 sensor reader
 ├── viewer.py               # Viser visualization
 ├── example_with_viewer.py  # Integration example
-└── README.md              # This file
+├── README.md              # This file
+├── CHANGELOG.md           # Update history
+└── assets/
+    ├── bno_board.png      # Hardware photo
+    └── bno_viser.png      # Visualization screenshot
 ```
 
 ## Browser Access
@@ -234,44 +255,40 @@ viz = IMUViewer(port=8081)  # Use different port
 - Ensure plotly is installed: `uv pip install plotly`
 
 ### IMU cuboid not rotating
-- This was a Viser synchronization issue (fixed in latest version)
 - Ensure you're using viser >= 0.2.10
-- The fix creates new numpy arrays for each update to trigger client sync
-- Test rotation with: `python3 test_rotation.py`
+- The code creates new numpy arrays for each update to trigger client sync
 
-### 3D orientation not matching physical sensor (AXIS MISMATCH)
-**Problem:** Physical rotation around Z shows as rotation around X (or other axis)
+## Coordinate System Reference
 
-**Solution:** Use axis transformation to fix coordinate frame mismatch
-
-**Correct fix** - Based on manual testing with real BNO080:
-```python
-viz = IMUViewer(port=8080, axis_transform='swap_xz')
+### World Frame (East-North-Up)
+```
+      Z (Up)
+      ↑
+      │
+      │
+      └────→ Y (North)
+     ╱
+    ╱
+   X (East)
 ```
 
-**Measured behavior (before fix):**
-- Physical Z rotation (perpendicular to board) → Red (X) axis ❌
-- Physical X rotation (along length) → Blue (Z) axis ❌
+### Quaternion
+The rotation vector quaternion represents the rotation from the World Frame to the Sensor Frame.
 
-**After fix (swap_xz):**
-- Physical Z rotation → Blue (Z) axis ✓
-- Physical X rotation → Red (X) axis ✓
-- Physical Y rotation → Green (Y) axis ✓
+```
+Sensor Frame = Quaternion * World Frame
+```
 
-**Verify it works:**
-   - Place IMU flat on table
-   - Rotate around Z (like turning a page)
-   - Should see rotation around BLUE axis in visualization
-   - LED helps identify orientation
+Reference: [Android Motion Sensors](https://developer.android.com/develop/sensors-and-location/sensors/sensors_motion)
 
-**Technical details:**
-- BNO080 coordinate frame doesn't match our Z-up visualization frame
-- Measured: Physical Z → Visual X, Physical X → Visual Z
-- Fix: Swap X ↔ Z using transformation matrix `[[0,0,1], [0,1,0], [1,0,0]]`
-- Transformation applied to quaternion via rotation matrices (scipy)
+### Euler Angles (ZYX Convention)
+- **Roll**: Rotation around X-axis (East)
+- **Pitch**: Rotation around Y-axis (North)
+- **Yaw**: Rotation around Z-axis (Up)
 
 ## References
 
 - [Viser Documentation](https://viser.studio/main/)
 - [Viser GitHub](https://github.com/nerfstudio-project/viser)
 - [Adafruit BNO08x Library](https://docs.circuitpython.org/projects/bno08x/en/latest/)
+- [Android Motion Sensors](https://developer.android.com/develop/sensors-and-location/sensors/sensors_motion)
