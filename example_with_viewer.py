@@ -26,10 +26,10 @@ def main():
         imu = BNO080Reader()
 
         # Initialize visualization (starts web server at http://localhost:8080)
-        # IMPORTANT: Based on manual testing:
-        #   Physical Z (perpendicular) → Should be Visual Z (blue) but shows as X (red)
-        #   Physical X (along length) → Should be Visual X (red) but shows as Z (blue)
-        # Fix: Swap X ↔ Z axes
+        # Board markings: X=length, Y=width, Z=perpendicular (up)
+        # Sensor frame: X=perpendicular (DOWN), Y=width, Z=length
+        # Confirmed by quaternion analysis: rotating around board Z changes sensor qy/qz (rotation around sensor X)
+        # Fix: Swap X ↔ Z + flip both axes
         viz = IMUViewer(port=8080, buffer_size=200, axis_transform='swap_xz')  # 5 seconds at 40Hz
 
         print("\n" + "="*80)
@@ -54,14 +54,14 @@ def main():
 
             # Optional: Print to console every second
             if int(data['timestamp']) % 1 == 0:
-                # print(f"[{data['timestamp']:.1f}s] "
-                #       f"Orientation: Roll={data['euler']['roll']*57.3:.1f}° "
-                #       f"Pitch={data['euler']['pitch']*57.3:.1f}° "
-                #       f"Yaw={data['euler']['yaw']*57.3:.1f}°")
                 print(f"[{data['timestamp']:.1f}s] "
-                      f"Acceleration: X={data['accel']['x']:.2f} "
-                      f"Y={data['accel']['y']:.2f} "
-                      f"Z={data['accel']['z']:.2f} m/s²")
+                      f"Orientation: Roll={data['euler']['roll']*57.3:.1f}° "
+                      f"Pitch={data['euler']['pitch']*57.3:.1f}° "
+                      f"Yaw={data['euler']['yaw']*57.3:.1f}°")
+                # print(f"[{data['timestamp']:.1f}s] "
+                #       f"Acceleration: X={data['accel']['x']:.2f} "
+                #       f"Y={data['accel']['y']:.2f} "
+                #       f"Z={data['accel']['z']:.2f} m/s²")
 
             # Sleep to maintain 40Hz rate
             time.sleep(1/40)
