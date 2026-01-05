@@ -92,10 +92,17 @@ class IMUViewer:
         #   - Physical Z (perpendicular) shows as Visual X (red) without transform
         #   - Physical X (along length) shows as Visual Z (blue) without transform
         #   - Solution: swap_xz to fix the mapping
+        #   - Additional issue: Z axis inverted (pointing down instead of up)
+        #   - Final solution: swap_xz_flipz combines swap + 180° rotation
         presets = {
             'swap_xy': np.array([[0, 1, 0], [1, 0, 0], [0, 0, 1]]),  # Swap X and Y
-            'swap_xz': np.array([[0, 0, 1], [0, 1, 0], [1, 0, 0]]),  # Swap X and Z (BNO080 fix)
+            'swap_xz': np.array([[0, 0, 1], [0, 1, 0], [1, 0, 0]]),  # Swap X and Z
             'swap_yz': np.array([[1, 0, 0], [0, 0, 1], [0, 1, 0]]),  # Swap Y and Z
+            'flip_z': np.array([[1, 0, 0], [0, 1, 0], [0, 0, -1]]),  # Flip Z direction only
+            'swap_xz_flipz': np.array([[0, 0, -1], [0, 1, 0], [-1, 0, 0]]),  # Swap X↔Z + flip both
+            'swap_xz_flipy': np.array([[0, 0, 1], [0, -1, 0], [1, 0, 0]]),  # Swap X↔Z + flip Y only
+            'swap_xz_rot180y': np.array([[0, 0, -1], [0, 1, 0], [1, 0, 0]]),  # Swap X↔Z + 180° around Y
+            'bno080_fix': np.array([[0, 0, 1], [0, -1, 0], [-1, 0, 0]]),  # Swap X↔Z + flip both Y and Z (BNO080 SparkFun board)
         }
 
         if isinstance(transform, str):
@@ -122,8 +129,9 @@ class IMUViewer:
         if self.axis_transform is None:
             return quat_dict
 
-        # Convert quaternion to rotation matrix
         from scipy.spatial.transform import Rotation
+
+        # First: Apply axis transformation
         quat_array = [quat_dict['x'], quat_dict['y'], quat_dict['z'], quat_dict['w']]  # scipy uses x,y,z,w
         rot = Rotation.from_quat(quat_array)
         rot_matrix = rot.as_matrix()
@@ -133,36 +141,79 @@ class IMUViewer:
 
         # Convert back to quaternion
         rot_transformed = Rotation.from_matrix(rot_matrix_transformed)
-        quat_transformed = rot_transformed.as_quat()  # Returns [x, y, z, w]
+
+        # Second: Apply 180° correction rotation around Y axis (to flip the IMU right-side up)
+        # 180° rotation around Y = quaternion (w=0, x=0, y=1, z=0)
+        correction_rot = Rotation.from_quat([0, 1, 0, 0])  # 180° around Y
+
+        # Multiply quaternions: final = correction * transformed
+        final_rot = correction_rot * rot_transformed
+
+        quat_final = final_rot.as_quat()  # Returns [x, y, z, w]
 
         return {
-            'w': quat_transformed[3],
-            'x': quat_transformed[0],
-            'y': quat_transformed[1],
-            'z': quat_transformed[2]
+            'w': quat_final[3],
+            'x': quat_final[0],
+            'y': quat_final[1],
+            'z': quat_final[2]
+        }
+
+    def _transform_euler(self, quat_dict):
+        """
+        Calculate Euler angles from transformed quaternion if transformation is active.
+
+        Args:
+            quat_dict: Original quaternion dictionary with 'w', 'x', 'y', 'z' keys
+
+        Returns:
+            Transformed euler angles dictionary with 'roll', 'pitch', 'yaw' keys (in radians)
+            or None if no transformation is active
+        """
+        if self.axis_transform is None:
+            return None  # Use original euler angles
+
+        # Get transformed quaternion
+        transformed_quat = self._transform_quaternion(quat_dict)
+
+        # Convert transformed quaternion to Euler angles
+        from scipy.spatial.transform import Rotation
+        quat_array = [
+            transformed_quat['x'],
+            transformed_quat['y'],
+            transformed_quat['z'],
+            transformed_quat['w']
+        ]
+        rot = Rotation.from_quat(quat_array)
+
+        # Get Euler angles in ZYX order (yaw, pitch, roll)
+        euler_zyx = rot.as_euler('ZYX', degrees=False)
+
+        return {
+            'yaw': euler_zyx[0],    # Z rotation
+            'pitch': euler_zyx[1],  # Y rotation
+            'roll': euler_zyx[2]    # X rotation
         }
 
     def _setup_3d_scene(self):
         """
         Setup 3D coordinate frame and IMU representation.
 
-        World frame convention:
+        World frame convention (matches board markings):
         - X axis: along length (forward)
         - Y axis: along width (left)
-        - Z axis: along height (up)
+        - Z axis: perpendicular (up)
         """
         # Add world coordinate frame at origin (Z-up convention)
-        # Scaled to be proportional to IMU size
         self.world_frame = self.server.scene.add_frame(
             name="/world",
             wxyz=(1.0, 0.0, 0.0, 0.0),
             position=(0.0, 0.0, 0.0),
             show_axes=True,
-            axes_length=0.045,  # 4.5cm - 1.5x the IMU length (3cm)
-            axes_radius=0.002   # Thinner axes
+            axes_length=0.045,  # 4.5cm - 1.5x the IMU length
+            axes_radius=0.002
         )
 
-        # Add IMU coordinate frame at origin (child of world)
+        # Add IMU coordinate frame (child of world)
         # Scaled to match IMU board size (3cm)
         self.imu_frame = self.server.scene.add_frame(
             name="/world/imu",
@@ -204,15 +255,14 @@ class IMUViewer:
             position=(led_offset_x, led_offset_y, led_offset_z)
         )
 
-        # Add ground plane for reference (XY plane at Z=0)
-        # Scaled to be proportional to IMU size
+        # Add ground plane for reference
         self.server.scene.add_grid(
             name="/ground",
-            width=0.3,      # 30cm - provides context without overwhelming
+            width=0.3,      # 30cm
             height=0.3,     # 30cm
             cell_size=0.05,  # 5cm grid cells
             cell_thickness=1.0,
-            position=(0.0, 0.0, -0.02)  # Slightly below origin (2cm)
+            position=(0.0, 0.0, -0.02)  # 2cm below origin
         )
 
     def _setup_plots(self):
@@ -319,10 +369,21 @@ class IMUViewer:
         self.linear_accel_buffer['y'].append(data['linear_accel']['y'])
         self.linear_accel_buffer['z'].append(data['linear_accel']['z'])
 
-        # Euler angles (convert to degrees)
-        self.euler_buffer['roll'].append(math.degrees(data['euler']['roll']))
-        self.euler_buffer['pitch'].append(math.degrees(data['euler']['pitch']))
-        self.euler_buffer['yaw'].append(math.degrees(data['euler']['yaw']))
+        # Euler angles - use transformed values if axis transformation is active
+        transformed_euler = self._transform_euler(data['quaternion'])
+        if transformed_euler is not None:
+            # Use transformed Euler angles (in transformed coordinate frame)
+            euler_to_use = transformed_euler
+            # Also update the data dict so printed values match visualization
+            data['euler'] = transformed_euler
+        else:
+            # Use original Euler angles
+            euler_to_use = data['euler']
+
+        # Store Euler angles in buffer (convert to degrees)
+        self.euler_buffer['roll'].append(math.degrees(euler_to_use['roll']))
+        self.euler_buffer['pitch'].append(math.degrees(euler_to_use['pitch']))
+        self.euler_buffer['yaw'].append(math.degrees(euler_to_use['yaw']))
 
         # Update 3D orientation and position
         self._update_3d_pose(data['quaternion'], position)
