@@ -26,11 +26,7 @@ def main():
         imu = BNO080Reader()
 
         # Initialize visualization (starts web server at http://localhost:8080)
-        # Board markings: X=length, Y=width, Z=perpendicular (up)
-        # Sensor frame: X=perpendicular (DOWN), Y=width, Z=length
-        # Confirmed by quaternion analysis: rotating around board Z changes sensor qy/qz (rotation around sensor X)
-        # Fix: Swap X ↔ Z + flip both axes
-        viz = IMUViewer(port=8080, buffer_size=200, axis_transform='swap_xz')  # 5 seconds at 40Hz
+        viz = IMUViewer(port=8080, buffer_size=200)  # 5 seconds at 40Hz
 
         print("\n" + "="*80)
         print("📊 Visualization running at: http://localhost:8080")
